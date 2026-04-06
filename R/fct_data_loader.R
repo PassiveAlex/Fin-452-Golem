@@ -109,7 +109,7 @@ compute_log_returns_wide <- function(wide_df, prefix) {
     arrange(date) %>%
     mutate(across(
       all_of(price_cols),
-      ~ log(.x / lag(.x)),
+      ~ dplyr::if_else(.x > 0 & lag(.x) > 0, log(.x / lag(.x)), NA_real_),
       .names = "ret_{.col}"
     )) %>%
     select(date, starts_with("ret_"))

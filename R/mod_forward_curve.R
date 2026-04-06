@@ -370,13 +370,7 @@ mod_forward_curve_server <- function(id, mkt_data, eia_data = NULL) {
       if (length(mkts) == 0L) return()
       eia_commodity <- MARKET_TO_EIA[mkts[1L]]
 
-      # Production/imports/exports are US-only
-      if (input$eia_series %in% c("production", "imports", "exports")) {
-        updateSelectInput(session, "eia_area", choices = c("U.S." = "US"), selected = "US")
-        return()
-      }
-
-      choices <- EIA_AREA_CHOICES[[eia_commodity]]
+      choices <- EIA_AREA_CHOICES[[eia_commodity]][[input$eia_series]]
       if (is.null(choices)) choices <- c("U.S." = "US")
       updateSelectInput(session, "eia_area", choices = choices,
                         selected = if ("US" %in% choices) "US" else choices[[1L]])
@@ -425,6 +419,13 @@ mod_forward_curve_server <- function(id, mkt_data, eia_data = NULL) {
                       date        >= sel$date_from(),
                       date        <= sel$date_to()) %>%
         dplyr::arrange(date)
+
+      # When both weekly and monthly exist for the same series/area,
+      # prefer weekly for the overlay (higher frequency = smoother chart)
+      if ("frequency" %in% names(eia_df) && length(unique(eia_df$frequency)) > 1L) {
+        eia_df <- dplyr::filter(eia_df, frequency == "weekly")
+      }
+
       req(nrow(eia_df) > 0L)
 
       # Price: C1 from already-filtered wide data

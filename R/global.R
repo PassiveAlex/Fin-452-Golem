@@ -35,41 +35,80 @@ MARKETS <- list(
 
 ENABLED_MARKETS <- names(Filter(function(m) m$enabled, MARKETS))
 
-# EIA region choices per commodity (used in both the forward curve overlay and the EIA tab)
+# EIA area choices: two-level list keyed by commodity then series_type.
+# Used by mod_eia.R (area selector) and mod_forward_curve.R (overlay region).
+# Only areas with confirmed working EIA API tickers are listed here.
+# Crude PADD stocks use the updated W_EPC0_SAX_R{XX} format (pending re-verification).
 EIA_AREA_CHOICES <- list(
-  crude = c(
-    "U.S."                = "US",
-    "PADD 1 (East Coast)" = "PADD1",
-    "PADD 2 (Midwest)"    = "PADD2",
-    "PADD 3 (Gulf Coast)" = "PADD3",
-    "PADD 4 (Rockies)"    = "PADD4",
-    "PADD 5 (West Coast)" = "PADD5",
-    "Cushing, OK"         = "Cushing"
+  crude = list(
+    stocks = c(
+      "U.S."                = "US",
+      "U.S. (Excl. SPR)"    = "US_excl_spr",
+      "PADD 1 (East Coast)" = "PADD1",
+      "PADD 2 (Midwest)"    = "PADD2",
+      "PADD 3 (Gulf Coast)" = "PADD3",
+      "PADD 4 (Rockies)"    = "PADD4",
+      "PADD 5 (West Coast)" = "PADD5",
+      "Cushing, OK"         = "Cushing"
+    ),
+    production = c(
+      "U.S."                = "US"
+    ),
+    imports = c(
+      "U.S."                = "US"
+    ),
+    exports = c(
+      "U.S."                = "US"
+    )
   ),
-  distillate = c(
-    "U.S."                = "US",
-    "PADD 1 (East Coast)" = "PADD1",
-    "PADD 2 (Midwest)"    = "PADD2",
-    "PADD 3 (Gulf Coast)" = "PADD3",
-    "PADD 4 (Rockies)"    = "PADD4",
-    "PADD 5 (West Coast)" = "PADD5"
+  distillate = list(
+    stocks = c(
+      "U.S."                = "US",
+      "PADD 1 (East Coast)" = "PADD1",
+      "PADD 2 (Midwest)"    = "PADD2",
+      "PADD 3 (Gulf Coast)" = "PADD3",
+      "PADD 4 (Rockies)"    = "PADD4",
+      "PADD 5 (West Coast)" = "PADD5"
+    )
   ),
-  gasoline = c(
-    "U.S."                = "US",
-    "PADD 1 (East Coast)" = "PADD1",
-    "PADD 2 (Midwest)"    = "PADD2",
-    "PADD 3 (Gulf Coast)" = "PADD3",
-    "PADD 4 (Rockies)"    = "PADD4",
-    "PADD 5 (West Coast)" = "PADD5"
+  gasoline = list(
+    stocks = c(
+      "U.S."                = "US",
+      "PADD 1 (East Coast)" = "PADD1",
+      "PADD 2 (Midwest)"    = "PADD2",
+      "PADD 3 (Gulf Coast)" = "PADD3",
+      "PADD 4 (Rockies)"    = "PADD4",
+      "PADD 5 (West Coast)" = "PADD5"
+    )
   ),
-  natural_gas = c(
-    "U.S. Lower 48"     = "US",
-    "East Region"       = "East",
-    "Midwest Region"    = "Midwest",
-    "Mountain Region"   = "Mountain",
-    "Pacific Region"    = "Pacific",
-    "South Central"     = "SouthCentral"
+  natural_gas = list(
+    storage = c(
+      "U.S. Lower 48"   = "US",
+      "East Region"     = "East",
+      "Midwest Region"  = "Midwest",
+      "Mountain Region" = "Mountain",
+      "Pacific Region"  = "Pacific",
+      "South Central"   = "SouthCentral"
+    ),
+    production = c(
+      "U.S."            = "US"
+    ),
+    consumption = c(
+      "U.S. Industrial" = "Industrial",
+      "U.S. Residential" = "Residential"
+    )
   )
+)
+
+# Available series types per commodity (drives the Series Type selector in mod_eia).
+# Only types with at least one confirmed working ticker are listed.
+EIA_SERIES_TYPE_CHOICES <- list(
+  crude       = c("Stocks"      = "stocks",  "Production" = "production",
+                  "Imports"     = "imports", "Exports"    = "exports"),
+  distillate  = c("Stocks"      = "stocks"),
+  gasoline    = c("Stocks"      = "stocks"),
+  natural_gas = c("Storage"     = "storage", "Production" = "production",
+                  "Consumption" = "consumption")
 )
 
 # Mapping from futures market key to EIA commodity label used in eia_fundamentals.feather

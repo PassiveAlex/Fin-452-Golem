@@ -1,7 +1,6 @@
 # mod_yield_curve.R
-# Yield curve display using FRED zero curve data.
-# Sidebar mirrors mod_forward_curve.R: date range for history panels,
-# snapshot date for point-in-time curve views.
+# Simplified yield curve tab using FRED zero curve panel.
+# Shows key maturity yields as time series lines and the 2s10s spread.
 
 mod_yield_curve_ui <- function(id) {
   ns <- NS(id)
@@ -16,229 +15,144 @@ mod_yield_curve_ui <- function(id) {
       actionButton(
         ns("full_history"), "Full history",
         class = "btn btn-sm btn-outline-secondary w-100 mb-2"
-      ),
-      hr(),
-      dateInput(ns("snap_date"), "Snapshot date", value = Sys.Date() - 1L),
-      dateInput(ns("comp_date"), "Compare to (optional)", value = NULL),
-      hr(),
-      checkboxInput(ns("show_forward"), "Overlay implied forward rates", value = FALSE),
-      hr(),
-      numericInput(
-        ns("interp_mat"), "Interpolate yield at maturity (years)",
-        value = 3, min = 0.1, max = 30, step = 0.25
-      ),
-      verbatimTextOutput(ns("interp_result"))
+      )
     ),
+    uiOutput(ns("no_data_banner")),
     bslib::navset_card_pill(
       bslib::nav_panel(
-        "Zero Curve",
-        plotly::plotlyOutput(ns("zero_curve"), height = "70%", width = "100%")
-      ),
-      bslib::nav_panel(
         "Yield History",
-        plotly::plotlyOutput(ns("yield_history"), height = "70%", width = "100%")
+        plotly::plotlyOutput(ns("yield_history"), height = "500px", width = "100%")
       ),
       bslib::nav_panel(
         "2s10s Spread",
-        plotly::plotlyOutput(ns("two_ten"), height = "70%", width = "100%")
+        plotly::plotlyOutput(ns("two_ten"), height = "500px", width = "100%")
       )
     )
   )
 }
 
 mod_yield_curve_server <- function(id, zero_curve_panel) {
-  # zero_curve_panel: reactive data.frame(date, maturity, yield)
   moduleServer(id, function(input, output, session) {
+
+    has_fred_data <- reactive({
+      panel <- zero_curve_panel()
+      !is.null(panel) && nrow(panel) > 0L
+    })
+
+    # Banner shown when FRED data could not be loaded
+    output$no_data_banner <- renderUI({
+      if (isTRUE(has_fred_data())) return(NULL)
+      bslib::card(
+        class = "bg-warning mb-2",
+        bslib::card_body(
+          bsicons::bs_icon("exclamation-triangle-fill"), " ",
+          "Treasury yield data could not be loaded from FRED. ",
+          "Charts will be empty until data is available."
+        )
+      )
+    })
 
     observeEvent(input$full_history, {
       updateDateRangeInput(session, "date_range",
-                           start = as.Date("2000-01-01"),
-                           end   = Sys.Date())
+        start = as.Date("2000-01-01"),
+        end   = Sys.Date()
+      )
     })
 
-    # Panel filtered to the selected date range (drives history panels)
+    # Panel filtered to selected date range
     panel_ranged <- reactive({
+      req(has_fred_data())
       panel <- zero_curve_panel()
-      req(panel, nrow(panel) > 0L)
       dplyr::filter(panel,
-                    date >= input$date_range[1],
-                    date <= input$date_range[2])
-    }) %>% bindEvent(zero_curve_panel(), input$date_range)
-
-    # Nearest available trading date helper
-    nearest_date <- function(target, available) {
-      if (is.na(target) || length(available) == 0L) return(as.Date(NA))
-      available[which.min(abs(as.numeric(available - target)))]
-    }
-
-    # Snap user-entered snapshot date to nearest date in the full panel
-    snap_date_actual <- reactive({
-      panel <- zero_curve_panel()
-      req(panel, nrow(panel) > 0L)
-      nearest_date(input$snap_date, unique(panel$date))
-    }) %>% bindEvent(zero_curve_panel(), input$snap_date)
-
-    snap_spline <- reactive({
-      d <- snap_date_actual()
-      req(!is.na(d))
-      get_date_spline(zero_curve_panel(), d)
-    }) %>% bindEvent(snap_date_actual())
-
-    # ── Interpolation sidebar output ─────────────────────────────────────────
-    output$interp_result <- renderText({
-      fn <- snap_spline()
-      req(fn)
-      y <- interpolate_zero_yield(fn, input$interp_mat)
-      sprintf("%.2fyr zero yield: %.3f%%", input$interp_mat, y * 100)
+        date >= input$date_range[1],
+        date <= input$date_range[2]
+      )
     })
 
-    # ── Zero Curve snapshot ──────────────────────────────────────────────────
-    output$zero_curve <- plotly::renderPlotly({
-      fn <- snap_spline()
-      req(fn)
-      d <- snap_date_actual()
-
-      smooth_df <- interpolated_term_structure(fn, from = 0.25, to = 30, by = 0.25)
-      knots     <- dplyr::filter(zero_curve_panel(), date == d)[, c("maturity", "yield")]
-
-      p <- plotly::plot_ly() %>%
-        plotly::add_lines(
-          data = smooth_df, x = ~maturity, y = ~yield * 100,
-          name = format(d, "%b %d, %Y"),
-          line = list(color = "#1f77b4", width = 2.5),
-          hovertemplate = "%{x:.2f}yr: %{y:.3f}%<extra></extra>"
-        ) %>%
-        plotly::add_markers(
-          data = knots, x = ~maturity, y = ~yield * 100,
-          name = "FRED knots", showlegend = FALSE,
-          marker = list(color = "#1f77b4", size = 7),
-          hovertemplate = "%{x:.2f}yr: %{y:.3f}%<extra></extra>"
-        )
-
-      if (isTRUE(input$show_forward)) {
-        fwd_df <- dplyr::mutate(smooth_df,
-          fwd = forward_rates(fn, maturity) * 100
-        )
-        p <- plotly::add_lines(p,
-          data = fwd_df, x = ~maturity, y = ~fwd,
-          name = "Implied forward rates",
-          line = list(color = "#ff7f0e", width = 1.5, dash = "dash"),
-          hovertemplate = "%{x:.2f}yr fwd: %{y:.3f}%<extra></extra>"
-        )
-      }
-
-      if (isTruthy(input$comp_date)) {
-        comp_d  <- nearest_date(input$comp_date, unique(zero_curve_panel()$date))
-        comp_fn <- get_date_spline(zero_curve_panel(), comp_d)
-        if (!is.null(comp_fn)) {
-          comp_smooth <- interpolated_term_structure(comp_fn)
-          p <- plotly::add_lines(p,
-            data = comp_smooth, x = ~maturity, y = ~yield * 100,
-            name = format(comp_d, "%b %d, %Y"),
-            line = list(color = "#adb5bd", width = 1.5, dash = "dash"),
-            hovertemplate = "%{x:.2f}yr: %{y:.3f}%<extra></extra>"
-          )
-        }
-      }
-
-      p %>%
-        plotly::layout(
-          xaxis     = list(title = "Maturity (years)"),
-          yaxis     = list(title = "Yield (%)"),
-          legend    = list(orientation = "h"),
-          hovermode = "x unified"
-        )
-    }) %>% bindEvent(snap_spline(), input$comp_date, input$show_forward)
-
-    # ── Yield Curve History heatmap ──────────────────────────────────────────
-    # x = date, y = maturity (1M bottom → 30Y top), colour = yield (%).
-    # Inversion episodes show as red at the short end against a green long end.
+    # ── Yield History: lines for 3M, 2Y, 5Y, 10Y, 30Y ───────────────────────
     output$yield_history <- plotly::renderPlotly({
-      hist_df <- panel_ranged()
-      req(hist_df, nrow(hist_df) > 0L)
+      req(has_fred_data())
+      df <- panel_ranged()
+      req(nrow(df) > 0L)
 
-      mat_order <- c("1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y")
-      mat_vals  <- c(1 / 12, 3 / 12, 6 / 12, 1, 2, 3, 5, 7, 10, 20, 30)
+      # Key maturities (numeric years) and their display labels
+      key_mats   <- c(0.25, 2, 5, 10, 30)
+      mat_labels <- c("0.25" = "3M", "2" = "2Y", "5" = "5Y", "10" = "10Y", "30" = "30Y")
+      mat_colors <- c("3M" = "#adb5bd", "2Y" = "#ff7f0e", "5Y" = "#2ca02c",
+                      "10Y" = "#1f77b4", "30Y" = "#9467bd")
 
-      # Map each numeric maturity to the nearest label
-      hist_labeled <- hist_df %>%
+      # Round maturities for matching (floating-point safety)
+      df_key <- df %>%
+        dplyr::mutate(mat_r = round(maturity, 4)) %>%
+        dplyr::filter(mat_r %in% round(key_mats, 4)) %>%
         dplyr::mutate(
-          mat_label = mat_order[
-            vapply(maturity,
-                   function(m) which.min(abs(m - mat_vals)),
-                   integer(1L))
-          ]
+          mat_label = mat_labels[as.character(mat_r)]
         ) %>%
-        dplyr::filter(mat_label %in% mat_order)
+        dplyr::filter(!is.na(mat_label))
 
-      # Pivot wide: rows = dates, cols = maturity labels
-      hist_wide <- hist_labeled %>%
-        dplyr::select(date, mat_label, yield) %>%
-        tidyr::pivot_wider(
-          names_from  = mat_label,
-          values_from = yield,
-          values_fn   = dplyr::first   # guard against any duplicates
-        ) %>%
-        dplyr::arrange(date)
+      req(nrow(df_key) > 0L)
 
-      mats_present <- intersect(mat_order, names(hist_wide))
-      req(length(mats_present) >= 2L)
-
-      # Transpose: heatmap needs rows = maturities, cols = dates
-      z_pct <- t(as.matrix(hist_wide[, mats_present])) * 100
-
-      plotly::plot_ly(
-        x          = hist_wide$date,
-        y          = mats_present,
-        z          = z_pct,
-        type       = "heatmap",
-        colorscale = list(c(0, "#c0392b"), c(0.4, "#f5f5f5"), c(1, "#1a7340")),
-        zmin       = 0,
-        zmax       = 6,
-        colorbar   = list(title = "Yield (%)"),
-        hovertemplate = "%{x|%Y-%m-%d} %{y}: %{z:.2f}%<extra></extra>"
-      ) %>%
-        plotly::layout(
-          xaxis = list(title = ""),
-          yaxis = list(title = "Maturity",
-                       categoryorder = "array",
-                       categoryarray = mats_present)
+      p <- plotly::plot_ly()
+      for (lbl in names(mat_labels)) {
+        sub <- dplyr::filter(df_key, mat_label == mat_labels[[lbl]]) %>%
+          dplyr::arrange(date)
+        if (nrow(sub) == 0L) next
+        p <- plotly::add_lines(p,
+          data          = sub,
+          x             = ~date,
+          y             = ~(yield * 100),
+          name          = mat_labels[[lbl]],
+          line          = list(color = mat_colors[[mat_labels[[lbl]]]], width = 1.5),
+          hovertemplate = paste0(mat_labels[[lbl]], " %{x|%Y-%m-%d}: %{y:.2f}%<extra></extra>")
         )
-    }) %>% bindEvent(panel_ranged())
+      }
 
-    # ── 2s10s Spread (filtered to date range) ────────────────────────────────
+      p %>% plotly::layout(
+        title     = list(text = "U.S. Treasury Yields"),
+        xaxis     = list(title = ""),
+        yaxis     = list(title = "Yield (%)"),
+        legend    = list(orientation = "h"),
+        hovermode = "x unified"
+      )
+    })
+
+    # ── 2s10s Spread ──────────────────────────────────────────────────────────
     output$two_ten <- plotly::renderPlotly({
-      hist_df <- panel_ranged()
-      req(hist_df, nrow(hist_df) > 0L)
+      req(has_fred_data())
+      df <- panel_ranged()
+      req(nrow(df) > 0L)
 
-      y2_df  <- dplyr::filter(hist_df, maturity == 2)[,  c("date", "yield")]
-      y10_df <- dplyr::filter(hist_df, maturity == 10)[, c("date", "yield")]
-      names(y2_df)[2]  <- "y2"
-      names(y10_df)[2] <- "y10"
+      y2_df  <- dplyr::filter(df, maturity == 2)[, c("date", "yield")]
+      y10_df <- dplyr::filter(df, maturity == 10)[, c("date", "yield")]
+      names(y2_df)[[2]]  <- "y2"
+      names(y10_df)[[2]] <- "y10"
 
       spread_df <- dplyr::inner_join(y2_df, y10_df, by = "date") %>%
-        dplyr::mutate(spread = (y10 - y2) * 100)
+        dplyr::mutate(spread = (y10 - y2) * 100) %>%
+        dplyr::arrange(date)
 
-      pos_df <- dplyr::filter(spread_df, spread >= 0)
-      neg_df <- dplyr::filter(spread_df, spread <  0)
+      req(nrow(spread_df) > 0L)
 
-      plotly::plot_ly() %>%
-        plotly::add_bars(
-          data = pos_df, x = ~date, y = ~spread,
-          name = "Normal (10y > 2y)", marker = list(color = "#1a7340"),
-          hovertemplate = "%{x|%Y-%m-%d}: %{y:.2f}bp<extra></extra>"
-        ) %>%
-        plotly::add_bars(
-          data = neg_df, x = ~date, y = ~spread,
-          name = "Inverted (10y < 2y)", marker = list(color = "#c0392b"),
-          hovertemplate = "%{x|%Y-%m-%d}: %{y:.2f}bp<extra></extra>"
-        ) %>%
+      plotly::plot_ly(
+        data          = spread_df,
+        x             = ~date,
+        y             = ~spread,
+        type          = "scatter",
+        mode          = "lines",
+        line          = list(color = "#1f77b4", width = 1.5),
+        hovertemplate = "%{x|%Y-%m-%d}: %{y:.2f}%<extra></extra>"
+      ) %>%
         plotly::layout(
-          barmode = "relative",
-          xaxis   = list(title = ""),
-          yaxis   = list(title = "2s10s Spread (%)"),
-          legend  = list(orientation = "h")
+          title  = list(text = "2s10s Spread (10Y \u2212 2Y)"),
+          xaxis  = list(title = ""),
+          yaxis  = list(title = "Spread (%)"),
+          shapes = list(list(
+            type = "line", x0 = 0, x1 = 1, xref = "paper",
+            y0   = 0, y1 = 0,
+            line = list(color = "#888", dash = "dot", width = 1)
+          ))
         )
-    }) %>% bindEvent(panel_ranged())
+    })
+
   })
 }

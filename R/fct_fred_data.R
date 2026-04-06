@@ -47,41 +47,35 @@ fetch_fred_zero_curve <- function(from = "2000-01-01",
                              maturity = numeric(0),
                              yield    = numeric(0))
 
-  raw <- tidyquant::tq_get(
-    names(tickers),
-    get  = "economic.data",
-    from = from
-  )
+  # Fetch each ticker directly via the FRED CSV endpoint using base R url().
+  # tidyquant::tq_get / quantmod::getSymbols.FRED use curl::curl() internally,
+  # which triggers an HTTP/2 INTERNAL_ERROR from FRED's CDN. Base R url() falls
+  # back to HTTP/1.1 and succeeds.
+  base_url  <- "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
+  from_date <- as.Date(from)
 
-  # Guard: tq_get returns NULL or an empty/malformed frame on network failure
-  if (is.null(raw) || !is.data.frame(raw) || nrow(raw) == 0L) {
-    return(empty_panel)
-  }
+  rows <- purrr::imap(tickers, function(maturity_yrs, ticker) {
+    tryCatch({
+      df <- read.csv(url(paste0(base_url, ticker)), na.strings = ".",
+                     stringsAsFactors = FALSE)
+      names(df) <- c("date", "price")
+      df$date   <- as.Date(df$date)
+      df <- df[!is.na(df$price) & df$date >= from_date, ]
+      if (nrow(df) == 0L) return(NULL)
+      data.frame(date     = df$date,
+                 maturity = maturity_yrs,
+                 yield    = df$price / 100,   # FRED reports percent
+                 stringsAsFactors = FALSE)
+    }, error = function(e) {
+      message("FRED fetch failed for ", ticker, ": ", conditionMessage(e))
+      NULL
+    })
+  })
 
-  # Normalize column name: some tidyquant / quantmod versions return "value"
-  # instead of "price" for FRED economic data.
-  if (!"price" %in% names(raw) && "value" %in% names(raw)) {
-    raw <- dplyr::rename(raw, price = value)
-  }
-  if (!"price" %in% names(raw)) {
-    stop("tq_get did not return a recognised price column. Got: ",
-         paste(names(raw), collapse = ", "))
-  }
+  valid <- Filter(Negate(is.null), rows)
+  if (length(valid) == 0L) return(empty_panel)
 
-  maturity_map <- data.frame(
-    symbol   = names(tickers),
-    maturity = as.numeric(tickers),
-    stringsAsFactors = FALSE
-  )
-
-  raw %>%
-    dplyr::inner_join(maturity_map, by = "symbol") %>%
-    dplyr::filter(!is.na(price)) %>%
-    dplyr::transmute(
-      date     = as.Date(date),
-      maturity = maturity,
-      yield    = price / 100   # FRED reports percent; convert to decimal
-    ) %>%
+  dplyr::bind_rows(valid) %>%
     dplyr::arrange(date, maturity)
 }
 

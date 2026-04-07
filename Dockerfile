@@ -4,7 +4,8 @@
 FROM rocker/r-ver:4.3
 
 # ── System libraries ──────────────────────────────────────────────────────────
-# Required by R package dependencies (curl, openssl, xml2, arrow, fonts, etc.)
+# Required by R package dependencies (curl, openssl, xml2, arrow, fonts,
+# numeric/Fortran packages, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev \
     libssl-dev \
@@ -17,10 +18,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     libfontconfig1-dev \
     zlib1g-dev \
+    libgfortran5 \
+    libblas-dev \
+    liblapack-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ── pak (fast, reliable R dependency resolver) ────────────────────────────────
-RUN Rscript -e "install.packages('pak', repos = 'https://r-lib.github.io/p/pak/stable/')"
+# ── remotes (stable, widely tested in Docker builds) ─────────────────────────
+RUN Rscript -e "install.packages('remotes', repos = 'https://cloud.r-project.org')"
 
 WORKDIR /app
 
@@ -28,7 +32,8 @@ WORKDIR /app
 # Copying only DESCRIPTION/NAMESPACE first means the expensive install step is
 # skipped on rebuilds where only R source files changed.
 COPY DESCRIPTION NAMESPACE ./
-RUN Rscript -e "pak::local_install_deps(ask = FALSE)"
+# Only install Imports + Depends — Suggests are dev/test tools not needed at runtime.
+RUN Rscript -e "remotes::install_deps(dependencies = c('Imports', 'Depends'), upgrade = 'never')"
 
 # ── Copy full package source (includes inst/extdata/eia_fundamentals.feather) ──
 COPY . .

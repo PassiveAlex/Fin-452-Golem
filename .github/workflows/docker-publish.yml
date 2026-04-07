@@ -1,0 +1,55 @@
+name: Build and Publish Docker Image
+
+on:
+  push:
+    branches: [main]
+  # Also rebuild after the nightly EIA data update so the published image
+  # always contains fresh fundamentals data.
+  workflow_run:
+    workflows: ["Update EIA Fundamentals Data"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # When triggered by workflow_run, only proceed if the upstream job succeeded.
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # workflow_run events check out the default branch, not the triggering SHA;
+          # use ref: main to ensure we get the latest committed feather file.
+          ref: main
+
+      # QEMU lets the amd64 runner build arm64 images via emulation.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Build for both Intel/AMD and Apple Silicon / ARM servers.
+          # No --platform hardcoding in the Dockerfile itself.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            alexhirtle/fin452golem:latest
+            alexhirtle/fin452golem:${{ github.sha }}
+          # Layer cache speeds up repeated builds (DESCRIPTION unchanged → deps skipped).
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

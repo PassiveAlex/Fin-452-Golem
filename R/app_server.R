@@ -41,34 +41,26 @@ app_server <- function(input, output, session) {
     result
   })
 
-  # ── 2. Fetch FRED zero curve at startup ────────────────────────────────────
-  # Runs once when the session starts. Shows a notification while loading.
-  # On failure (no internet, FRED down) falls back to an empty panel —
-  # the Yield Curve tab will display a "no data" message gracefully.
-  zero_curve_panel <- shiny::reactiveVal(
-    data.frame(date = as.Date(character(0)),
-               maturity = numeric(0),
-               yield    = numeric(0))
+  # ── 2. Load FRED zero curve from feather cache ─────────────────────────────
+  # Loaded once at startup from the nightly-refreshed file (same pattern as EIA).
+  # Falls back gracefully (data = NULL empty panel) if the file is missing.
+  fred_cache <- tryCatch(
+    load_fred_data(),
+    error = function(e) {
+      warning("FRED data load failed: ", conditionMessage(e))
+      list(data = NULL, last_updated = NULL, is_stale = TRUE)
+    }
   )
 
-  shiny::observe({
-    shiny::showNotification("Loading Treasury yield curve from FRED…",
-                            id       = "fred_loading",
-                            duration = NULL,
-                            type     = "message")
-    tryCatch({
-      panel <- fetch_fred_zero_curve(from = "2000-01-01")
-      zero_curve_panel(panel)
-      shiny::removeNotification("fred_loading")
-    }, error = function(e) {
-      shiny::removeNotification("fred_loading")
-      shiny::showNotification(
-        paste("Could not load FRED data:", conditionMessage(e)),
-        type     = "warning",
-        duration = 8
-      )
-    })
-  }) %>% shiny::bindEvent(TRUE, once = TRUE)   # run exactly once at startup
+  zero_curve_panel <- shiny::reactiveVal(
+    if (!is.null(fred_cache$data)) {
+      fred_cache$data
+    } else {
+      data.frame(date = as.Date(character(0)),
+                 maturity = numeric(0),
+                 yield    = numeric(0))
+    }
+  )
 
   # ── 3. Load EIA fundamentals from feather cache ────────────────────────────
   # Loaded once at startup from the nightly-refreshed file. Falls back

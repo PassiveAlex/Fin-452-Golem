@@ -182,3 +182,51 @@ forward_rates <- function(spline_fn, maturities) {
   dy_dT  <- spline_fn(maturities, deriv = 1)
   y + maturities * dy_dT
 }
+
+# ── Feather cache loader (mirrors load_eia_data pattern) ─────────────────────
+
+#' Resolve path to the FRED feather cache file
+fred_data_path <- function() {
+  pkg <- tryCatch(
+    system.file("extdata/fred_zero_curve.feather", package = "fin452golem"),
+    error = function(e) ""
+  )
+  if (nchar(pkg) > 0L && file.exists(pkg)) return(pkg)
+  dev <- "inst/extdata/fred_zero_curve.feather"
+  if (file.exists(dev)) return(dev)
+  NULL
+}
+
+#' Load cached FRED zero curve from the nightly-written feather file
+#'
+#' Returns a list:
+#'   $data         — data.frame with columns date/maturity/yield, or NULL
+#'   $last_updated — character timestamp, or NULL
+#'   $is_stale     — TRUE when file is absent or older than stale_days
+#'
+#' @param stale_days numeric — staleness threshold in days (default 3)
+load_fred_data <- function(stale_days = 3) {
+  path <- fred_data_path()
+  if (is.null(path)) {
+    return(list(data = NULL, last_updated = NULL, is_stale = TRUE))
+  }
+
+  data <- tryCatch(
+    arrow::read_feather(path),
+    error = function(e) {
+      warning("Cannot read FRED feather: ", conditionMessage(e))
+      NULL
+    }
+  )
+
+  ts_path      <- sub("\\.feather$", "_last_updated.txt", path)
+  last_updated <- if (file.exists(ts_path)) readLines(ts_path, warn = FALSE)[1L] else NULL
+
+  is_stale <- tryCatch({
+    if (is.null(last_updated)) return(TRUE)
+    lu <- as.POSIXct(last_updated, tz = "UTC", format = "%Y-%m-%d %H:%M:%S")
+    as.numeric(difftime(Sys.time(), lu, units = "days")) > stale_days
+  }, error = function(e) TRUE)
+
+  list(data = data, last_updated = last_updated, is_stale = is_stale)
+}

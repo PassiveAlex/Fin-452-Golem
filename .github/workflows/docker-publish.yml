@@ -3,10 +3,10 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: [main]
-  # Also rebuild after the nightly EIA data update so the published image
-  # always contains fresh fundamentals data.
+  # Also rebuild after either nightly data update so the published image
+  # always contains fresh EIA and FRED data.
   workflow_run:
-    workflows: ["Update EIA Fundamentals Data"]
+    workflows: ["Update EIA Fundamentals Data", "Update FRED Yield Curve Data"]
     types: [completed]
     branches: [main]
 
